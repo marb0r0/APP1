@@ -1,4 +1,4 @@
-import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { createRootRoute, HeadContent, Link, Outlet, Scripts } from "@tanstack/react-router";
 import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import appCss from "../styles.css?url";
@@ -13,12 +13,12 @@ export const Route = createRootRoute({
       { title: APP_NAME },
       {
         name: "description",
-        content: "Live scores, match projections, xG models, value picks, and stats across European (Champions, Europa, Conference) and South American (Brasileirão, Argentino, Libertadores, Sul-Americana) competitions.",
+        content: "Live scores, match projections, xG models, value picks, and stats across European (Champions, Europa, Conference) and South American (Brasileirão, Argentino, Libertadores, Sul-Americana) football leagues.",
       },
       { property: "og:title", content: APP_NAME },
       {
         property: "og:description",
-        content: "Live scores, match projections, xG models, value picks, and stats across European (Champions, Europa, Conference) and South American (Brasileirão, Argentino, Libertadores, Sul-Americana) competitions.",
+        content: "Live scores, match projections, xG models, value picks, and stats across European (Champions, Europa, Conference) and South American (Brasileirão, Argentino, Libertadores, Sul-Americana) football leagues.",
       },
       { name: "theme-color", content: "#0c1210" },
     ],
@@ -44,6 +44,12 @@ export const Route = createRootRoute({
         <PreviewHostBridge />
         <AuthProvider>
           <Outlet />
+          <Link
+            to="/agents"
+            className="fixed bottom-4 right-4 z-50 rounded-full border border-primary/40 bg-surface px-4 py-3 text-xs font-bold text-primary shadow-lg transition-colors hover:bg-primary hover:text-primary-ink"
+          >
+            Agentes &amp; Mercados
+          </Link>
         </AuthProvider>
         <Scripts />
       </body>
