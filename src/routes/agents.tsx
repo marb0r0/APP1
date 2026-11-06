@@ -41,6 +41,15 @@ function MarketAgents() {
     .filter((row) => row.edge !== null && row.edge >= 0.02)
     .sort((a, b) => (b.edge ?? 0) - (a.edge ?? 0));
 
+  const opportunitySummary = useMemo(() => {
+    const totalStake = opportunities.reduce((sum, row) => sum + row.stake, 0);
+    const avgEdge = opportunities.length
+      ? opportunities.reduce((sum, row) => sum + (row.edge ?? 0), 0) / opportunities.length
+      : 0;
+    const best = opportunities[0] ?? null;
+    return { totalStake, avgEdge, best };
+  }, [opportunities]);
+
   function updatePrice(key: string, value: string) {
     setPrices((previous) => ({ ...previous, [key]: value }));
   }
@@ -77,6 +86,13 @@ function MarketAgents() {
         </AgentCard>
       </section>
 
+      <section className="mt-5 grid gap-3 md:grid-cols-4">
+        <MiniStat label="Banca" value={`€${bankroll.toFixed(2)}`} />
+        <MiniStat label="Exposição sugerida" value={`€${opportunitySummary.totalStake.toFixed(2)}`} />
+        <MiniStat label="Edge médio" value={opportunities.length ? `${(opportunitySummary.avgEdge * 100).toFixed(1)}%` : "0.0%"} />
+        <MiniStat label="Melhor mercado" value={opportunitySummary.best ? opportunitySummary.best.label : "—"} />
+      </section>
+
       <section className="mt-5 rounded-2xl border border-line bg-surface p-4 sm:p-5">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
@@ -85,10 +101,10 @@ function MarketAgents() {
           </div>
           <div className="grid grid-cols-2 gap-3 text-xs">
             <label className="text-muted">Banca (€)
-              <input type="number" min="0" step="10" value={bankroll} onChange={(event) => setBankroll(Math.max(0, Number(event.target.value) || 0))} className="mt-1 block w-28 rounded-lg border border-line bg-bg px-3 py-2 font-mono text-fg" />
+              <input type="number" min="0" step="10" value={bankroll} onChange={(event) => setBankroll(Math.max(0, Number(event.target.value) || 0))} className="mt-1 block w-28 rounded-lg border border-line bg-bg px-2 py-1.5 text-fg focus:border-primary focus:outline-none" />
             </label>
             <label className="text-muted">Teto por aposta (%)
-              <input type="number" min="0" max="2" step="0.25" value={maxStakePercent} onChange={(event) => setMaxStakePercent(Math.max(0, Math.min(2, Number(event.target.value) || 0)))} className="mt-1 block w-28 rounded-lg border border-line bg-bg px-3 py-2 font-mono text-fg" />
+              <input type="number" min="0" max="2" step="0.25" value={maxStakePercent} onChange={(event) => setMaxStakePercent(Math.max(0, Math.min(2, Number(event.target.value) || 0)))} className="mt-1 block w-28 rounded-lg border border-line bg-bg px-2 py-1.5 text-fg focus:border-primary focus:outline-none" />
             </label>
           </div>
         </div>
@@ -96,11 +112,11 @@ function MarketAgents() {
         {board.matches.length ? (
           <div className="mt-4 flex flex-wrap gap-2">
             <label className="sr-only" htmlFor="agent-match">Jogo</label>
-            <select id="agent-match" value={match?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)} className="min-w-64 rounded-lg border border-line bg-bg px-3 py-2 text-sm text-fg">
+            <select id="agent-match" value={match?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)} className="min-w-64 rounded-lg border border-line bg-bg px-3 py-2 text-sm text-fg focus:border-primary focus:outline-none">
               {board.matches.map((item) => <option key={item.id} value={item.id}>{item.home} vs {item.away} · {item.league}</option>)}
             </select>
             <div className="flex flex-wrap gap-1 rounded-lg border border-line bg-bg p-1">
-              {CATEGORIES.map((item) => <button key={item} type="button" onClick={() => setCategory(item)} className={`rounded-md px-2.5 py-1.5 text-xs ${category === item ? "bg-primary font-semibold text-primary-ink" : "text-muted hover:text-fg"}`}>{item}</button>)}
+              {CATEGORIES.map((item) => <button key={item} type="button" onClick={() => setCategory(item)} className={`rounded-md px-2.5 py-1.5 text-xs ${category === item ? "bg-primary font-semibold text-primary-ink" : "text-muted hover:bg-surface"}`}>{item}</button>)}
             </div>
           </div>
         ) : (
@@ -115,7 +131,7 @@ function MarketAgents() {
           <div className="mt-3 overflow-x-auto rounded-xl border border-line">
             <table className="w-full min-w-[850px] text-left text-xs">
               <thead className="bg-surface-2 text-[10px] uppercase tracking-wide text-muted">
-                <tr><th className="px-3 py-3">Mercado</th><th className="px-3 py-3 text-right">Prob. modelo</th><th className="px-3 py-3 text-right">Odd justa</th><th className="px-3 py-3 text-right">Odd mercado</th><th className="px-3 py-3 text-right">Edge</th><th className="px-3 py-3 text-right">Stake indicativa</th></tr>
+                <tr><th className="px-3 py-3">Mercado</th><th className="px-3 py-3 text-right">Prob. modelo</th><th className="px-3 py-3 text-right">Odd justa</th><th className="px-3 py-3 text-right">Odd</th><th className="px-3 py-3 text-right">Edge</th><th className="px-3 py-3 text-right">Stake</th></tr>
               </thead>
               <tbody className="divide-y divide-line">
                 {rows.map((row) => (
@@ -124,9 +140,9 @@ function MarketAgents() {
                     <td className="px-3 py-2.5 text-right font-mono text-fg">{(row.probability * 100).toFixed(1)}%</td>
                     <td className="px-3 py-2.5 text-right font-mono text-muted">{row.fairOdds ? row.fairOdds.toFixed(2) : "—"}</td>
                     <td className="px-3 py-2.5 text-right">
-                      <input aria-label={`Odd de mercado para ${row.label}`} type="number" min="1.01" step="0.01" placeholder="Odd" value={prices[row.key] ?? row.bookmakerOdds ?? ""} onChange={(event) => updatePrice(row.key, event.target.value)} className="w-20 rounded border border-line bg-bg px-2 py-1.5 text-right font-mono text-fg" />
+                      <input aria-label={`Odd de mercado para ${row.label}`} type="number" min="1.01" step="0.01" placeholder="Odd" value={prices[row.key] ?? row.bookmakerOdds ?? ""} onChange={(event) => updatePrice(row.key, event.target.value)} className="w-20 rounded border border-line bg-bg px-2 py-1 text-right text-fg focus:border-primary focus:outline-none" />
                     </td>
-                    <td className={`px-3 py-2.5 text-right font-mono font-semibold ${row.edge !== null && row.edge >= 0.02 ? "text-primary" : "text-muted"}`}>{row.edge === null ? "—" : `${row.edge >= 0 ? "+" : ""}${(row.edge * 100).toFixed(1)}%`}</td>
+                    <td className={`px-3 py-2.5 text-right font-mono font-semibold ${row.edge !== null && row.edge >= 0.02 ? "text-primary" : "text-muted"}`}>{row.edge === null ? "—" : `${(row.edge * 100).toFixed(1)}%`}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-gold">{row.stake > 0 ? `€${row.stake.toFixed(2)}` : "—"}</td>
                   </tr>
                 ))}
@@ -137,7 +153,7 @@ function MarketAgents() {
       </section>
 
       <p className="mt-4 text-[11px] leading-relaxed text-muted">
-        As odds 1X2 vêm da fonte de dados do jogo quando disponíveis; as restantes odds são preenchidas manualmente e não são verificadas. Probabilidades, edge e stakes são estimativas, não aconselhamento financeiro nem garantia de lucro. Considere comissões, limites, variações de odds e a possibilidade de perder a totalidade da stake.
+        As odds 1X2 vêm da fonte de dados do jogo quando disponíveis; as restantes odds são preenchidas manualmente e não são verificadas. Probabilidades, edge e stakes são estimativas, não garantias de lucro. Use esta página como ferramenta de análise e gestão do risco, nunca como promessa de rendimento.
       </p>
     </main>
   );
@@ -150,6 +166,15 @@ function AgentCard({ title, status, children }: { title: string; status: string;
       <p className="mt-2 font-display text-base font-semibold text-fg">{status}</p>
       <p className="mt-2 text-xs leading-relaxed text-muted">{children}</p>
     </article>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-line bg-surface p-3">
+      <p className="text-[10px] uppercase tracking-[0.2em] text-muted">{label}</p>
+      <p className="mt-2 font-display text-xl font-bold text-fg">{value}</p>
+    </div>
   );
 }
 
