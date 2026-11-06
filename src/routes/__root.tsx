@@ -45,16 +45,10 @@ export const Route = createRootRoute({
         <AuthProvider>
           <Outlet />
           <Link
-            to="/agents"
-            className="fixed bottom-4 right-4 z-50 rounded-full border border-primary/40 bg-surface px-4 py-3 text-xs font-bold text-primary shadow-lg transition-colors hover:bg-primary hover:text-primary-ink"
-          >
-            Agentes &amp; Mercados
-          </Link>
-          <Link
-            to="/todos"
+            to="/predictions"
             className="fixed bottom-4 left-4 z-50 rounded-full border border-line bg-surface px-4 py-3 text-xs font-bold text-fg shadow-lg transition-colors hover:border-primary hover:text-primary"
           >
-            Lista de tarefas
+            Histórico
           </Link>
         </AuthProvider>
         <Scripts />
