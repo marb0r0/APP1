@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { getBoard } from "@/lib/football.functions";
-import type { Board, MatchView } from "@/lib/football";
+import type { Board } from "@/lib/football";
 import {
   calculateMarketEdge,
   calculateResponsibleStake,
@@ -17,38 +17,54 @@ export const Route = createFileRoute("/agents")({
 
 const CATEGORIES: Array<MarketCategory | "Todos"> = ["Todos", "Resultado", "Golos", "Equipa", "Ambas marcam"];
 
+type MarketRow = ReturnType<typeof getMatchMarkets>[number] & {
+  key: string;
+  fixture: string;
+  league: string;
+  phase: string;
+  odds: number | null;
+  edge: number | null;
+  stake: number;
+};
+
 function MarketAgents() {
   const board = Route.useLoaderData() as Board;
-  const [selectedId, setSelectedId] = useState(board.matches[0]?.id ?? "");
   const [category, setCategory] = useState<MarketCategory | "Todos">("Todos");
+  const [leagueFilter, setLeagueFilter] = useState("all");
+  const [minOdds, setMinOdds] = useState(1.01);
+  const [minEdge, setMinEdge] = useState(2);
   const [prices, setPrices] = useState<Record<string, string>>({});
   const [bankroll, setBankroll] = useState(250);
   const [maxStakePercent, setMaxStakePercent] = useState(1);
+  const [dailyLimitPercent, setDailyLimitPercent] = useState(5);
+  const [mode, setMode] = useState<"study" | "review">("study");
 
-  const match = board.matches.find((item) => item.id === selectedId) ?? board.matches[0] ?? null;
-  const allMarkets = useMemo(() => (match ? getMatchMarkets(match) : []), [match]);
-  const rows = allMarkets
-    .filter((market) => category === "Todos" || market.category === category)
-    .map((market) => {
-      const key = `${match?.id}:${market.id}`;
+  const leagues = useMemo(() => [...new Set(board.matches.map((match) => match.league))].sort(), [board.matches]);
+  const fixtures = useMemo(() => board.matches.filter((match) => match.phase === "pre"), [board.matches]);
+  const allRows = useMemo<MarketRow[]>(() => fixtures.flatMap((match) =>
+    getMatchMarkets(match).map((market) => {
+      const key = `${match.id}:${market.id}`;
       const typedPrice = prices[key];
       const odds = typedPrice === undefined ? market.bookmakerOdds : Number(typedPrice);
-      const edge = odds == null ? null : calculateMarketEdge(market.probability, odds);
-      const stake = odds == null ? 0 : calculateResponsibleStake(market.probability, odds, bankroll, maxStakePercent);
-      return { ...market, key, odds, edge, stake };
-    });
-  const opportunities = rows
-    .filter((row) => row.edge !== null && row.edge >= 0.02)
-    .sort((a, b) => (b.edge ?? 0) - (a.edge ?? 0));
+      const validOdds = odds != null && Number.isFinite(odds) && odds > 1 ? odds : null;
+      const edge = validOdds == null ? null : calculateMarketEdge(market.probability, validOdds);
+      const stake = validOdds == null ? 0 : calculateResponsibleStake(market.probability, validOdds, bankroll, maxStakePercent);
+      return { ...market, key, fixture: `${match.home} vs ${match.away}`, league: match.league, phase: match.phase, odds: validOdds, edge, stake };
+    }),
+  ), [fixtures, prices, bankroll, maxStakePercent]);
 
-  const opportunitySummary = useMemo(() => {
-    const totalStake = opportunities.reduce((sum, row) => sum + row.stake, 0);
-    const avgEdge = opportunities.length
-      ? opportunities.reduce((sum, row) => sum + (row.edge ?? 0), 0) / opportunities.length
-      : 0;
-    const best = opportunities[0] ?? null;
-    return { totalStake, avgEdge, best };
-  }, [opportunities]);
+  const filteredRows = allRows.filter((row) =>
+    (category === "Todos" || row.category === category) &&
+    (leagueFilter === "all" || row.league === leagueFilter) &&
+    (row.odds === null || row.odds >= minOdds),
+  );
+  const opportunities = filteredRows
+    .filter((row) => row.edge !== null && row.edge >= minEdge / 100)
+    .sort((a, b) => (b.edge ?? 0) - (a.edge ?? 0));
+  const suggestedExposure = opportunities.reduce((sum, row) => sum + row.stake, 0);
+  const exposureLimit = Math.max(0, bankroll * dailyLimitPercent / 100);
+  const exposureAlert = suggestedExposure > exposureLimit && opportunities.length > 0;
+  const best = opportunities[0] ?? null;
 
   function updatePrice(key: string, value: string) {
     setPrices((previous) => ({ ...previous, [key]: value }));
@@ -59,123 +75,86 @@ function MarketAgents() {
       <header className="flex flex-wrap items-start justify-between gap-4 border-b border-line pb-5">
         <div>
           <Link to="/" className="text-xs font-semibold text-primary hover:underline">← Voltar ao Pitchline</Link>
-          <p className="mt-3 text-xs font-mono uppercase tracking-widest text-gold">Central de agentes especializados</p>
+          <p className="mt-3 text-xs font-mono uppercase tracking-widest text-gold">Central de análise</p>
           <h1 className="mt-1 font-display text-3xl font-bold text-fg sm:text-4xl">Mercados, estatísticas e risco</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">
-            Análise assistida por regras transparentes. As probabilidades são estimativas do modelo, não previsões garantidas.
-          </p>
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">Estimativas transparentes, não previsões garantidas. A aplicação não coloca apostas.</p>
         </div>
         <div className="rounded-xl border border-gold/40 bg-gold/10 px-4 py-3 text-xs text-fg sm:max-w-sm">
-          <strong className="text-gold">Jogo responsável:</strong> defina um limite que possa perder, não persiga prejuízos e nunca trate uma estimativa como rendimento certo.
+          <strong className="text-gold">Jogo responsável:</strong> use apenas dinheiro que possa perder, não persiga prejuízos e faça pausas.
         </div>
       </header>
 
       <section className="mt-5 grid gap-3 md:grid-cols-3">
-        <AgentCard title="Analista de mercados" status={opportunities.length ? `${opportunities.length} oportunidade(s) indicativa(s)` : "Sem valor confirmado"}>
-          {opportunities.length
-            ? `Maior edge observado: ${opportunities[0].label} (${(100 * (opportunities[0].edge ?? 0)).toFixed(1)}%). Confirme a odd e a liquidez diretamente na casa.`
-            : "Com as odds introduzidas, não foi encontrado edge mínimo de 2%. Mercados sem preço não são classificados como oportunidades."}
+        <AgentCard title="Analista de mercados" status={opportunities.length ? `${opportunities.length} sinal(is) de edge` : "Sem sinal acima do filtro"}>
+          {best ? `Maior estimativa: ${best.fixture} · ${best.label}, edge ${(100 * (best.edge ?? 0)).toFixed(1)}%. Odds podem estar desatualizadas; confirme preço e liquidez.` : "Sem preço válido e edge acima do limite escolhido, não há oportunidade indicativa."}
         </AgentCard>
-        <AgentCard title="Analista de estatísticas" status={match ? `${match.league} · xG ${match.homeXg.toFixed(2)}–${match.awayXg.toFixed(2)}` : "Sem jogos disponíveis"}>
-          {match
-            ? `${match.home}: ${getRecentFormSummary(match.formHome)}. ${match.away}: ${getRecentFormSummary(match.formAway)}. Mercados derivados da matriz de resultados Dixon–Coles.`
-            : "Não existem jogos para analisar neste momento."}
+        <AgentCard title="Analista estatístico" status={`${fixtures.length} jogos pré-jogo · fonte ${board.source}`}>
+          {fixtures[0] ? `${fixtures[0].home}: ${getRecentFormSummary(fixtures[0].formHome)}. ${fixtures[0].away}: ${getRecentFormSummary(fixtures[0].formAway)}. Mercados derivados do xG/Dixon–Coles disponível; não existem aqui dados de lesões, escalações ou xT.` : "Não há jogos pré-jogo disponíveis."}
         </AgentCard>
-        <AgentCard title="Gestor de banca e risco" status={`Limite por aposta: ${maxStakePercent.toFixed(2)}%`}>
-          A stake indicativa usa Quarter-Kelly e um teto definido por si. Stake igual a zero quando não há odd válida ou edge positivo. Não são executadas apostas.
+        <AgentCard title="Controlo de risco" status={exposureAlert ? "Limite de exposição excedido" : `Exposição sugerida dentro do limite`}>
+          {`Exposição agregada €${suggestedExposure.toFixed(2)} / limite definido €${exposureLimit.toFixed(2)}. Este controlo é indicativo e não bloqueia apostas externas.`}
         </AgentCard>
       </section>
 
-      <section className="mt-5 grid gap-3 md:grid-cols-4">
-        <MiniStat label="Banca" value={`€${bankroll.toFixed(2)}`} />
-        <MiniStat label="Exposição sugerida" value={`€${opportunitySummary.totalStake.toFixed(2)}`} />
-        <MiniStat label="Edge médio" value={opportunities.length ? `${(opportunitySummary.avgEdge * 100).toFixed(1)}%` : "0.0%"} />
-        <MiniStat label="Melhor mercado" value={opportunitySummary.best ? opportunitySummary.best.label : "—"} />
+      <section className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <MiniStat label="Banca de referência" value={`€${bankroll.toFixed(2)}`} />
+        <MiniStat label="Exposição sugerida" value={`€${suggestedExposure.toFixed(2)}`} />
+        <MiniStat label="Edge médio filtrado" value={opportunities.length ? `${(opportunities.reduce((sum, row) => sum + (row.edge ?? 0), 0) / opportunities.length * 100).toFixed(1)}%` : "—"} />
+        <MiniStat label="Melhor sinal" value={best ? `${best.fixture}: ${best.label}` : "—"} />
       </section>
 
       <section className="mt-5 rounded-2xl border border-line bg-surface p-4 sm:p-5">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h2 className="font-display text-xl font-bold text-fg">Scanner de oportunidades por mercado</h2>
-            <p className="mt-1 text-xs text-muted">Insira odds decimais para mercados sem cotação disponível. Sem odd de mercado, não calculamos valor esperado.</p>
+            <h2 className="font-display text-xl font-bold text-fg">Scanner multi-jogo e multi-mercado</h2>
+            <p className="mt-1 max-w-3xl text-xs text-muted">Só os preços 1X2 podem vir do fornecedor. Introduza as restantes odds manualmente. A comparação usa as probabilidades do modelo baseadas em xG e não é uma validação histórica independente.</p>
           </div>
-          <div className="grid grid-cols-2 gap-3 text-xs">
-            <label className="text-muted">Banca (€)
-              <input type="number" min="0" step="10" value={bankroll} onChange={(event) => setBankroll(Math.max(0, Number(event.target.value) || 0))} className="mt-1 block w-28 rounded-lg border border-line bg-bg px-2 py-1.5 text-fg focus:border-primary focus:outline-none" />
-            </label>
-            <label className="text-muted">Teto por aposta (%)
-              <input type="number" min="0" max="2" step="0.25" value={maxStakePercent} onChange={(event) => setMaxStakePercent(Math.max(0, Math.min(2, Number(event.target.value) || 0)))} className="mt-1 block w-28 rounded-lg border border-line bg-bg px-2 py-1.5 text-fg focus:border-primary focus:outline-none" />
-            </label>
-          </div>
+          <label className="text-xs text-muted">Modo
+            <select value={mode} onChange={(event) => setMode(event.target.value as typeof mode)} className="mt-1 block rounded-lg border border-line bg-bg px-3 py-2 text-fg"><option value="study">Estudo (recomendado)</option><option value="review">Revisão manual</option></select>
+          </label>
         </div>
 
-        {board.matches.length ? (
-          <div className="mt-4 flex flex-wrap gap-2">
-            <label className="sr-only" htmlFor="agent-match">Jogo</label>
-            <select id="agent-match" value={match?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)} className="min-w-64 rounded-lg border border-line bg-bg px-3 py-2 text-sm text-fg focus:border-primary focus:outline-none">
-              {board.matches.map((item) => <option key={item.id} value={item.id}>{item.home} vs {item.away} · {item.league}</option>)}
-            </select>
-            <div className="flex flex-wrap gap-1 rounded-lg border border-line bg-bg p-1">
-              {CATEGORIES.map((item) => <button key={item} type="button" onClick={() => setCategory(item)} className={`rounded-md px-2.5 py-1.5 text-xs ${category === item ? "bg-primary font-semibold text-primary-ink" : "text-muted hover:bg-surface"}`}>{item}</button>)}
-            </div>
-          </div>
-        ) : (
-          <p className="mt-5 rounded-xl border border-line bg-bg p-5 text-sm text-muted">Não há jogos disponíveis para a data atual. Tente novamente mais tarde.</p>
-        )}
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <label className="text-xs text-muted">Banca (€)<input type="number" min="0" step="10" value={bankroll} onChange={(event) => setBankroll(Math.max(0, Number(event.target.value) || 0))} className="mt-1 block w-full rounded-lg border border-line bg-bg px-3 py-2 text-fg" /></label>
+          <label className="text-xs text-muted">Teto por sinal (%)<input type="number" min="0" max="2" step="0.25" value={maxStakePercent} onChange={(event) => setMaxStakePercent(Math.max(0, Math.min(2, Number(event.target.value) || 0)))} className="mt-1 block w-full rounded-lg border border-line bg-bg px-3 py-2 text-fg" /></label>
+          <label className="text-xs text-muted">Limite de exposição (%)<input type="number" min="0" max="100" step="1" value={dailyLimitPercent} onChange={(event) => setDailyLimitPercent(Math.max(0, Math.min(100, Number(event.target.value) || 0)))} className="mt-1 block w-full rounded-lg border border-line bg-bg px-3 py-2 text-fg" /></label>
+          <label className="text-xs text-muted">Edge mínimo (%)<input type="number" min="0" max="100" step="0.5" value={minEdge} onChange={(event) => setMinEdge(Math.max(0, Math.min(100, Number(event.target.value) || 0)))} className="mt-1 block w-full rounded-lg border border-line bg-bg px-3 py-2 text-fg" /></label>
+          <label className="text-xs text-muted">Odd mínima<input type="number" min="1.01" step="0.05" value={minOdds} onChange={(event) => setMinOdds(Math.max(1.01, Number(event.target.value) || 1.01))} className="mt-1 block w-full rounded-lg border border-line bg-bg px-3 py-2 text-fg" /></label>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <label className="sr-only" htmlFor="agent-league">Competição</label>
+          <select id="agent-league" value={leagueFilter} onChange={(event) => setLeagueFilter(event.target.value)} className="rounded-lg border border-line bg-bg px-3 py-2 text-xs text-fg"><option value="all">Todas as competições</option>{leagues.map((league) => <option key={league} value={league}>{league}</option>)}</select>
+          <div className="flex flex-wrap gap-1 rounded-lg border border-line bg-bg p-1">{CATEGORIES.map((item) => <button key={item} type="button" onClick={() => setCategory(item)} aria-pressed={category === item} className={`rounded-md px-2.5 py-1.5 text-xs ${category === item ? "bg-primary font-semibold text-primary-ink" : "text-muted hover:bg-surface"}`}>{item}</button>)}</div>
+        </div>
 
-        {!!board.matches.length && <>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-bg px-3 py-2 text-xs">
-            <span className="text-muted">Jogos analisados: <strong className="text-fg">{board.matches.length}</strong></span>
-            <span className="text-muted">Oportunidades com edge ≥ 2%: <strong className="text-gold">{opportunities.length}</strong></span>
-          </div>
-          <div className="mt-3 overflow-x-auto rounded-xl border border-line">
-            <table className="w-full min-w-[850px] text-left text-xs">
-              <thead className="bg-surface-2 text-[10px] uppercase tracking-wide text-muted">
-                <tr><th className="px-3 py-3">Mercado</th><th className="px-3 py-3 text-right">Prob. modelo</th><th className="px-3 py-3 text-right">Odd justa</th><th className="px-3 py-3 text-right">Odd</th><th className="px-3 py-3 text-right">Edge</th><th className="px-3 py-3 text-right">Stake</th></tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {rows.map((row) => (
-                  <tr key={row.id} className={row.edge !== null && row.edge >= 0.02 ? "bg-primary/5" : "bg-surface"}>
-                    <td className="px-3 py-2.5"><span className="text-[10px] text-muted">{row.category}</span><span className="block font-semibold text-fg">{row.label}</span></td>
-                    <td className="px-3 py-2.5 text-right font-mono text-fg">{(row.probability * 100).toFixed(1)}%</td>
-                    <td className="px-3 py-2.5 text-right font-mono text-muted">{row.fairOdds ? row.fairOdds.toFixed(2) : "—"}</td>
-                    <td className="px-3 py-2.5 text-right">
-                      <input aria-label={`Odd de mercado para ${row.label}`} type="number" min="1.01" step="0.01" placeholder="Odd" value={prices[row.key] ?? row.bookmakerOdds ?? ""} onChange={(event) => updatePrice(row.key, event.target.value)} className="w-20 rounded border border-line bg-bg px-2 py-1 text-right text-fg focus:border-primary focus:outline-none" />
-                    </td>
-                    <td className={`px-3 py-2.5 text-right font-mono font-semibold ${row.edge !== null && row.edge >= 0.02 ? "text-primary" : "text-muted"}`}>{row.edge === null ? "—" : `${(row.edge * 100).toFixed(1)}%`}</td>
-                    <td className="px-3 py-2.5 text-right font-mono text-gold">{row.stake > 0 ? `€${row.stake.toFixed(2)}` : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-bg px-3 py-2 text-xs">
+          <span className="text-muted">Fonte: {board.source} · Atualizado {new Date(board.generatedAt).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}</span>
+          <span className="text-muted">{filteredRows.length} mercados · {opportunities.length} acima do edge mínimo</span>
+        </div>
+        {exposureAlert && <p role="status" className="mt-3 rounded-xl border border-live/40 bg-live/10 p-3 text-xs text-live">A soma das stakes indicativas ultrapassa o limite de exposição que definiu. Reduza limites ou mantenha-se em modo de estudo.</p>}
+        {mode === "study" && <p className="mt-3 text-xs text-muted">Modo de estudo: registe previsões no histórico antes de avaliar o desempenho. As stakes são apenas um cálculo demonstrativo.</p>}
+
+        {fixtures.length ? <div className="mt-3 overflow-x-auto rounded-xl border border-line">
+          <table className="w-full min-w-[1050px] text-left text-xs">
+            <thead className="bg-surface-2 text-[10px] uppercase tracking-wide text-muted"><tr><th className="px-3 py-3">Jogo / mercado</th><th className="px-3 py-3 text-right">Prob. xG</th><th className="px-3 py-3 text-right">Odd justa</th><th className="px-3 py-3 text-right">Odd mercado</th><th className="px-3 py-3 text-right">Edge</th><th className="px-3 py-3 text-right">Stake indicativa</th><th className="px-3 py-3">Fonte</th></tr></thead>
+            <tbody className="divide-y divide-line">{filteredRows.map((row) => <tr key={row.key} className={row.edge !== null && row.edge >= minEdge / 100 ? "bg-primary/5" : "bg-surface"}>
+              <td className="px-3 py-2.5"><span className="text-[10px] text-muted">{row.league} · {row.category}</span><span className="block font-semibold text-fg">{row.fixture}</span><span className="text-muted">{row.label}</span></td>
+              <td className="px-3 py-2.5 text-right font-mono text-fg">{(row.probability * 100).toFixed(1)}%</td><td className="px-3 py-2.5 text-right font-mono text-muted">{row.fairOdds ? row.fairOdds.toFixed(2) : "—"}</td>
+              <td className="px-3 py-2.5 text-right"><input aria-label={`Odd de mercado para ${row.fixture} ${row.label}`} type="number" min="1.01" step="0.01" placeholder="Odd" value={prices[row.key] ?? row.bookmakerOdds ?? ""} onChange={(event) => updatePrice(row.key, event.target.value)} className="w-20 rounded border border-line bg-bg px-2 py-1 text-right text-fg" /></td>
+              <td className={`px-3 py-2.5 text-right font-mono font-semibold ${row.edge !== null && row.edge >= minEdge / 100 ? "text-primary" : "text-muted"}`}>{row.edge === null ? "—" : `${(row.edge * 100).toFixed(1)}%`}</td><td className="px-3 py-2.5 text-right font-mono text-gold">{row.stake > 0 ? `€${row.stake.toFixed(2)}` : "—"}</td><td className="px-3 py-2.5 text-muted">{row.bookmakerOdds !== null ? "Feed 1X2" : prices[row.key] ? "Manual" : "Sem odd"}</td>
+            </tr>)}</tbody>
+          </table>
+        </div> : <p className="mt-5 rounded-xl border border-line bg-bg p-5 text-sm text-muted">Não há jogos pré-jogo disponíveis.</p>}
       </section>
-
-      <p className="mt-4 text-[11px] leading-relaxed text-muted">
-        As odds 1X2 vêm da fonte de dados do jogo quando disponíveis; as restantes odds são preenchidas manualmente e não são verificadas. Probabilidades, edge e stakes são estimativas, não garantias de lucro. Use esta página como ferramenta de análise e gestão do risco, nunca como promessa de rendimento.
-      </p>
+      <p className="mt-4 text-[11px] leading-relaxed text-muted">Probabilidades e stakes não são aconselhamento financeiro nem garantia de lucro. Dados de lesões, escalações, liquidez, limites de casa, xT e histórico independente não estão disponíveis nesta fonte; verifique-os externamente. Não aposte dinheiro necessário para despesas essenciais.</p>
     </main>
   );
 }
 
 function AgentCard({ title, status, children }: { title: string; status: string; children: string }) {
-  return (
-    <article className="rounded-2xl border border-line bg-surface p-4">
-      <h2 className="text-xs font-bold uppercase tracking-wider text-primary">{title}</h2>
-      <p className="mt-2 font-display text-base font-semibold text-fg">{status}</p>
-      <p className="mt-2 text-xs leading-relaxed text-muted">{children}</p>
-    </article>
-  );
+  return <article className="rounded-2xl border border-line bg-surface p-4"><h2 className="text-xs font-bold uppercase tracking-wider text-primary">{title}</h2><p className="mt-2 font-display text-base font-semibold text-fg">{status}</p><p className="mt-2 text-xs leading-relaxed text-muted">{children}</p></article>;
 }
 
 function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-line bg-surface p-3">
-      <p className="text-[10px] uppercase tracking-[0.2em] text-muted">{label}</p>
-      <p className="mt-2 font-display text-xl font-bold text-fg">{value}</p>
-    </div>
-  );
+  return <div className="rounded-2xl border border-line bg-surface p-3"><p className="text-[10px] uppercase tracking-[0.2em] text-muted">{label}</p><p className="mt-2 truncate font-display text-lg font-bold text-fg">{value}</p></div>;
 }
-
-void (null as unknown as MatchView | null);
