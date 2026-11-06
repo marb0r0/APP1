@@ -1,0 +1,6 @@
+{
+  "name": "Pitchline - Football Intelligence",
+  "description": "Live scores, match projections, xG models, value picks, and stats across European (Champions, Europa, Conference) and South American (Brasileirão, Argentino, Libertadores, Sul-Americana) competitions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
