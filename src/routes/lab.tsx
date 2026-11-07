@@ -29,7 +29,6 @@ function Lab() {
   const [opponent, setOpponent] = useState("");
   const [mark, setMark] = useState<ResultMark["result"]>("W");
 
-  // FootStats-AI Autonomous Coach State
   const [coachReport, setCoachReport] = useState<CoachReportResponse | null>(null);
   const [coachLoading, setCoachLoading] = useState(false);
   const [coachError, setCoachError] = useState<string | null>(null);
@@ -97,7 +96,6 @@ function Lab() {
 
   return (
     <main className="mx-auto min-h-screen max-w-4xl px-4 pb-20 pt-6 sm:px-6">
-      {/* Top Header */}
       <header className="border-b border-line pb-5">
         <div className="flex items-center justify-between">
           <Link
@@ -116,15 +114,14 @@ function Lab() {
         <h1 className="font-display mt-3 text-3xl font-bold text-fg sm:text-4xl">
           FootStats Lab: Fisiologia & Treinador IA
         </h1>
-        <p className="mt-2 text-sm leading-relaxed text-muted max-w-2xl">
+        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
           Port do repositório FootStats-AI. Monitorização de fadiga e carga aguda:crónica (ACWR),
           prevenção de lesões e agente tático autónomo impulsionado por Gemini.
         </p>
       </header>
 
-      {/* AI Coach Banner / Report */}
       <section className="mt-6 rounded-2xl border border-line bg-surface p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-line">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
           <div className="flex items-center gap-2">
             <Bot size={20} className="text-primary" />
             <h2 className="font-display text-lg font-bold text-fg">
@@ -135,7 +132,7 @@ function Lab() {
             type="button"
             onClick={handleConsultCoach}
             disabled={coachLoading}
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-ink hover:opacity-90 transition-opacity"
+            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-ink transition-opacity hover:opacity-90"
           >
             {coachLoading ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
             <span>{coachLoading ? "A analisar dados..." : "Consultar Treinador IA"}</span>
@@ -163,15 +160,46 @@ function Lab() {
               </span>
             </div>
 
-            <p className="text-xs text-muted leading-relaxed bg-bg rounded-xl p-3 border border-line">
+            <p className="rounded-xl border border-line bg-bg p-3 text-xs leading-relaxed text-muted">
               {coachReport.workloadVerdict}
             </p>
+
+            <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-semibold text-primary">Explicabilidade</p>
+                <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-bold text-primary">
+                  {coachReport.confidence}
+                </span>
+              </div>
+
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-lg border border-line bg-bg p-2">
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-muted">Qualidade dos dados</p>
+                  <p className="mt-1 text-xs font-semibold text-fg">{coachReport.sourceStatus}</p>
+                </div>
+                <div className="rounded-lg border border-line bg-bg p-2">
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-muted">Dados usados</p>
+                  <p className="mt-1 text-xs text-fg">{coachReport.usedInputs.join("; ")}</p>
+                </div>
+              </div>
+
+              <div className="mt-2 rounded-lg border border-line bg-bg p-2">
+                <p className="text-[10px] uppercase tracking-[0.12em] text-muted">Limitações</p>
+                <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-fg">
+                  {coachReport.limitations.map((item, index) => (
+                    <li key={`${item}-${index}`}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <p className="mt-2 text-[11px] font-medium text-gold">{coachReport.nonClinicalWarning}</p>
+            </div>
 
             <div className="space-y-1.5 pt-1">
               <p className="text-xs font-semibold text-fg">Diretrizes Táticas:</p>
               {coachReport.tacticalAdvice.map((advice, i) => (
                 <div key={i} className="flex items-start gap-2 text-xs text-muted">
-                  <CheckCircle2 size={13} className="text-primary mt-0.5 shrink-0" />
+                  <CheckCircle2 size={13} className="mt-0.5 shrink-0 text-primary" />
                   <span>{advice}</span>
                 </div>
               ))}
@@ -182,13 +210,11 @@ function Lab() {
               <p className="mt-0.5 text-fg">{coachReport.keyPrescription}</p>
             </div>
 
-            <p className="text-[10px] text-muted font-mono text-right pt-1">
-              Motor: {coachReport.modelUsed}
-            </p>
+            <p className="pt-1 text-right text-[10px] font-mono text-muted">Motor: {coachReport.modelUsed}</p>
           </div>
         ) : (
           <div className="py-6 text-center text-xs text-muted">
-            <BrainCircuit size={28} className="mx-auto text-muted/50 mb-2" />
+            <BrainCircuit size={28} className="mx-auto mb-2 text-muted/50" />
             <p>
               Clique em <strong>"Consultar Treinador IA"</strong> para gerar o diagnóstico biométrico
               completo e recomendações táticas baseadas no ACWR atual.
@@ -197,12 +223,9 @@ function Lab() {
         )}
       </section>
 
-      {/* Acute / Chronic Workload Ratio (ACWR) */}
       <section className="mt-6 rounded-2xl border border-line bg-surface p-5">
         <div className="flex items-center justify-between">
-          <p className="text-xs font-semibold tracking-wider text-muted uppercase">
-            Carga Aguda / Crónica (ACWR)
-          </p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted">Carga Aguda / Crónica (ACWR)</p>
           <span className="text-[11px] font-mono text-muted">Gabbett 2016 Model</span>
         </div>
 
@@ -217,19 +240,18 @@ function Lab() {
           </div>
         </div>
 
-        <p className="mt-3 text-xs leading-relaxed text-muted bg-bg p-3 rounded-xl border border-line">
+        <p className="mt-3 rounded-xl border border-line bg-bg p-3 text-xs leading-relaxed text-muted">
           {acwr.message} (Faixa segura / Sweet Spot: <strong>0.80 a 1.30</strong>. Acima de 1.50
           indica sobrecarga exponencial).
         </p>
 
-        {/* Visual scale bar */}
         <div className="mt-4 space-y-1">
           <div className="flex justify-between text-[10px] font-mono text-muted">
             <span>0.5 (Subtreino)</span>
-            <span className="text-primary font-bold">0.8 - 1.3 (Sweet Spot)</span>
-            <span className="text-live font-bold">&gt; 1.5 (Perigo)</span>
+            <span className="font-bold text-primary">0.8 - 1.3 (Sweet Spot)</span>
+            <span className="font-bold text-live">&gt; 1.5 (Perigo)</span>
           </div>
-          <div className="h-2 rounded-full bg-bg overflow-hidden relative">
+          <div className="relative h-2 overflow-hidden rounded-full bg-bg">
             <div
               className={`h-full transition-all duration-300 ${
                 acwr.acwr > 1.45 ? "bg-live" : acwr.acwr < 0.8 ? "bg-gold" : "bg-primary"
@@ -239,9 +261,8 @@ function Lab() {
           </div>
         </div>
 
-        {/* Log Session Form */}
-        <div className="mt-5 pt-4 border-t border-line">
-          <p className="text-xs font-semibold text-fg mb-3">Registar Sessão de Treino:</p>
+        <div className="mt-5 border-t border-line pt-4">
+          <p className="mb-3 text-xs font-semibold text-fg">Registar Sessão de Treino:</p>
           <div className="flex flex-wrap items-end gap-3">
             <label className="text-xs text-muted">
               Duração (min)
@@ -268,14 +289,14 @@ function Lab() {
             <button
               type="button"
               onClick={addSession}
-              className="h-10 rounded-lg bg-primary px-4 text-xs font-bold text-primary-ink hover:opacity-90 transition-opacity"
+              className="h-10 rounded-lg bg-primary px-4 text-xs font-bold text-primary-ink transition-opacity hover:opacity-90"
             >
               Registar Treino
             </button>
             <button
               type="button"
               onClick={loadSample}
-              className="h-10 rounded-lg border border-line bg-surface-2 px-4 text-xs font-semibold text-fg hover:border-gold transition-colors"
+              className="h-10 rounded-lg border border-line bg-surface-2 px-4 text-xs font-semibold text-fg transition-colors hover:border-gold"
             >
               Carregar Mês de Exemplo
             </button>
@@ -283,18 +304,15 @@ function Lab() {
         </div>
       </section>
 
-      {/* Form Fingerprint & Results Logger */}
       <section className="mt-5 rounded-2xl border border-line bg-surface p-5">
-        <p className="text-xs font-semibold tracking-wider text-muted uppercase">
-          Form Fingerprint & Histórico
-        </p>
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted">Form Fingerprint & Histórico</p>
         <p className="mt-1 text-xs text-muted">
           {print
             ? `Os últimos 5 jogos correspondem a uma sequência de ${print.since} com ${print.similarity}% de similaridade.`
             : "Registe pelo menos 10 resultados para comparar a sequência atual com o histórico."}
         </p>
 
-        <div className="mt-4 flex flex-wrap items-end gap-3 pt-3 border-t border-line">
+        <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-line pt-3">
           <label className="text-xs text-muted">
             Adversário
             <input
@@ -319,35 +337,28 @@ function Lab() {
           <button
             type="button"
             onClick={addResult}
-            className="h-10 rounded-lg bg-primary px-4 text-xs font-bold text-primary-ink hover:opacity-90 transition-opacity"
+            className="h-10 rounded-lg bg-primary px-4 text-xs font-bold text-primary-ink transition-opacity hover:opacity-90"
           >
             Registar Jogo
           </button>
         </div>
 
-        <ul className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+        <ul className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
           {results
             .slice()
             .reverse()
             .slice(0, 8)
             .map((r) => (
-              <li
-                key={r.id}
-                className="rounded-lg border border-line bg-bg p-2 text-center font-mono"
-              >
+              <li key={r.id} className="rounded-lg border border-line bg-bg p-2 text-center font-mono">
                 <span
-                  className={`inline-block font-bold mr-1.5 ${
-                    r.result === "W"
-                      ? "text-primary"
-                      : r.result === "D"
-                        ? "text-gold"
-                        : "text-live"
+                  className={`mr-1.5 inline-block font-bold ${
+                    r.result === "W" ? "text-primary" : r.result === "D" ? "text-gold" : "text-live"
                   }`}
                 >
                   {r.result}
                 </span>
                 <span className="text-fg">{r.opponent}</span>
-                <span className="block text-[10px] text-muted mt-0.5">{r.date}</span>
+                <span className="mt-0.5 block text-[10px] text-muted">{r.date}</span>
               </li>
             ))}
         </ul>

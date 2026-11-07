@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { createServerFn } from "@tanstack/react-start";
 import { GoogleGenAI } from "@google/genai";
 import { assessCoachDataQuality } from "./coach-data-quality";
@@ -8,22 +7,20 @@ import {
   type CoachExplainability,
 } from "./coach-explainability";
 
-const coachReportRequestSchema = z.object({
-  acwr: z.number().finite().nonnegative(),
-  acute: z.number().finite().nonnegative(),
-  chronic: z.number().finite().nonnegative(),
-  sessionsCount: z.number().int().nonnegative(),
-  recentResults: z.array(z.string().trim().min(1).max(120)).max(10),
-  upcomingMatch: z.object({
-    home: z.string().trim().min(1).max(100),
-    away: z.string().trim().min(1).max(100),
-    homeXg: z.number().finite().nonnegative(),
-    awayXg: z.number().finite().nonnegative(),
-    league: z.string().trim().min(1).max(100),
-  }).optional(),
-});
-
-export type CoachReportRequest = z.infer<typeof coachReportRequestSchema>;
+export type CoachReportRequest = {
+  acwr: number;
+  acute: number;
+  chronic: number;
+  sessionsCount: number;
+  recentResults: string[];
+  upcomingMatch?: {
+    home: string;
+    away: string;
+    homeXg: number;
+    awayXg: number;
+    league: string;
+  };
+};
 
 export type CoachReportResponse = {
   headline: string;
@@ -34,30 +31,8 @@ export type CoachReportResponse = {
   modelUsed: string;
 } & CoachExplainability;
 
-const generatedCoachReportSchema = z.object({
-  headline: z.string().min(8).max(200),
-  injuryRiskLevel: z.enum(["BAIXO", "MODERADO", "ELEVADO"]),
-  workloadVerdict: z.string().min(20).max(500),
-  tacticalAdvice: z.array(z.string().min(8).max(200)).min(1).max(5),
-  keyPrescription: z.string().min(10).max(250),
-});
-
-export function parseCoachReport(raw: string) {
-  try {
-    const result = generatedCoachReportSchema.safeParse(JSON.parse(raw) as unknown);
-    if (!result.success) {
-      console.warn("[FootStats-AI] invalid coach report payload", result.error.flatten());
-      return null;
-    }
-    return result.data;
-  } catch (error) {
-    console.warn("[FootStats-AI] failed to parse coach report payload:", error);
-    return null;
-  }
-}
-
 export const getAiCoachReport = createServerFn({ method: "POST" })
-  .validator((input: unknown) => coachReportRequestSchema.parse(input))
+  .validator((input: CoachReportRequest) => input)
   .handler(async ({ data }): Promise<CoachReportResponse> => {
     const quality = assessCoachDataQuality(data);
     if (quality.status === "insufficient") {
@@ -65,14 +40,10 @@ export const getAiCoachReport = createServerFn({ method: "POST" })
     }
 
     const explainability = buildCoachExplainability(data, quality);
-    const explanationText = formatCoachExplainability(explainability);
-    const qualityNote = quality.warnings.length
-      ? `Limitações dos dados: ${quality.warnings.join(" ")}`
-      : "Dados recebidos sem limitações sinalizadas; a origem e a atualidade não foram verificadas.";
-
+    const explainabilityText = formatCoachExplainability(explainability);
     const { acwr, acute, chronic, recentResults, upcomingMatch } = data;
-    const apiKey = process.env.GEMINI_API_KEY;
 
+    const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
       try {
         const ai = new GoogleGenAI();
@@ -80,40 +51,59 @@ export const getAiCoachReport = createServerFn({ method: "POST" })
 Analise apenas os dados fornecidos e explicite as suas limitações.
 - Rácio ACWR: ${acwr.toFixed(2)} (carga aguda: ${acute}; carga crónica: ${chronic}).
 - Resultados recentes: ${recentResults.join(", ") || "não fornecidos"}.
-${upcomingMatch ? `- Próximo jogo: ${upcomingMatch.home} vs ${upcomingMatch.away} (${upcomingMatch.league}; xG casa ${upcomingMatch.homeXg}; xG fora ${upcomingMatch.awayXg}).` : ""}
-- Qualidade dos dados: ${quality.status}. ${qualityNote}
+${
+  upcomingMatch
+    ? `- Próximo jogo: ${upcomingMatch.home} vs ${upcomingMatch.away} (${upcomingMatch.league}; xG casa ${upcomingMatch.homeXg}; xG fora ${upcomingMatch.awayXg}).`
+    : ""
+}
+- Qualidade dos dados: ${quality.status}. ${quality.warnings.length ? `Limitações dos dados: ${quality.warnings.join(" ")}` : "Dados recebidos sem limitações sinalizadas; a origem e a atualidade não foram verificadas."}
 
 Devolva apenas JSON válido com headline, injuryRiskLevel (BAIXO, MODERADO ou ELEVADO), workloadVerdict, tacticalAdvice (1 a 5 recomendações gerais, não médicas) e keyPrescription (sugestão geral e cautelosa, não prescrição clínica). Não infira dados que não foram fornecidos.`;
 
         const response = await ai.models.generateContent({
           model: "gemini-3.8-flash",
           contents: prompt,
-          config: { responseMimeType: "application/json" },
+          config: {
+            responseMimeType: "application/json",
+          },
         });
 
-        const report = response.text?.trim() ? parseCoachReport(response.text.trim()) : null;
-        if (report) {
-          return {
-            ...report,
-            workloadVerdict: `${report.workloadVerdict} ${qualityNote} ${explanationText}`,
-            modelUsed: "Gemini 3.8 Flash (FootStats-AI)",
-            ...explainability,
-          };
+        const text = response.text?.trim() ?? "";
+        if (text) {
+          try {
+            const parsed = JSON.parse(text) as Partial<CoachReportResponse>;
+            return {
+              headline: parsed.headline ?? "Análise indicativa da carga de treino",
+              injuryRiskLevel: parsed.injuryRiskLevel ?? "MODERADO",
+              workloadVerdict: `${parsed.workloadVerdict ?? "Análise indicativa."} ${explainabilityText}`,
+              tacticalAdvice: parsed.tacticalAdvice ?? [
+                "Rever a carga junto com perceção de esforço, recuperação e contexto individual.",
+                "Comparar esta semana com o histórico completo antes de alterar o plano.",
+              ],
+              keyPrescription:
+                parsed.keyPrescription ??
+                "Validar qualquer alteração com a equipa técnica ou um profissional qualificado.",
+              modelUsed: "Gemini 3.8 Flash (FootStats-AI)",
+              ...explainability,
+            };
+          } catch (error) {
+            console.warn("[FootStats-AI] invalid JSON payload from Gemini:", error);
+          }
         }
-      } catch (error) {
-        console.warn("[FootStats-AI] Gemini call failed or offline, using cautious rule-based fallback:", error);
+      } catch (err) {
+        console.warn("[FootStats-AI] Gemini call failed or offline, using rule-based advisor:", err);
       }
     }
 
-    // Conservative fallback: ACWR alone is not a medical assessment.
-    let headline = "Análise indicativa da carga de treino";
     let injuryRiskLevel: CoachReportResponse["injuryRiskLevel"] = "MODERADO";
+    let headline = "Análise indicativa da carga de treino";
     let workloadVerdict = `O ACWR recebido é ${acwr.toFixed(2)}. Este indicador isolado não diagnostica fadiga nem prevê lesões.`;
-    let tacticalAdvice = [
+    let tacticalAdvice: string[] = [
       "Rever a carga junto com perceção de esforço, recuperação e contexto individual.",
       "Comparar esta semana com o histórico completo antes de alterar o plano.",
     ];
-    let keyPrescription = "Não há dados suficientes para uma prescrição individual; validar qualquer alteração com a equipa técnica ou um profissional qualificado.";
+    let keyPrescription =
+      "Não há dados suficientes para uma prescrição individual; validar qualquer alteração com a equipa técnica ou um profissional qualificado.";
 
     if (acwr > 1.45) {
       headline = "Carga aguda acima da referência";
@@ -140,7 +130,7 @@ Devolva apenas JSON válido com headline, injuryRiskLevel (BAIXO, MODERADO ou EL
     return {
       headline,
       injuryRiskLevel,
-      workloadVerdict: `${workloadVerdict} ${qualityNote} ${explanationText}`,
+      workloadVerdict: `${workloadVerdict} ${explainabilityText}`,
       tacticalAdvice,
       keyPrescription,
       modelUsed: "FootStats-AI Sports Engine (heurístico; não clínico)",
