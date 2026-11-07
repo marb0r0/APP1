@@ -10,22 +10,28 @@ export type CoachExplainability = {
   nonClinicalWarning: string;
 };
 
+const SOURCE_STATUS_LABELS: Record<CoachDataQuality["status"], string> = {
+  sufficient: "sem alertas automáticos",
+  limited: "limitada",
+  insufficient: "insuficiente",
+};
+
 /** Confidence is capped at MODERADA: data quality checks are not model calibration. */
 export function buildCoachExplainability(
   input: CoachDataQualityInput,
   quality: CoachDataQuality,
 ): CoachExplainability {
   const usedInputs = [
-    `ACWR: ${input.acwr.toFixed(2)}`,
-    `carga aguda: ${input.acute.toFixed(2)}`,
-    `carga crónica: ${input.chronic.toFixed(2)}`,
-    `sessões registadas: ${input.sessionsCount}`,
-    `resultados recentes fornecidos: ${input.recentResults.length}`,
+    `ACWR ${input.acwr.toFixed(2)}`,
+    `carga aguda ${input.acute.toFixed(2)}`,
+    `carga crónica ${input.chronic.toFixed(2)}`,
+    `${input.sessionsCount} sessões registadas`,
+    `${input.recentResults.length} resultados recentes fornecidos`,
   ];
 
   const limitations = [
     ...quality.warnings,
-    "A aplicação não verifica a origem nem a atualidade dos registos.",
+    "A origem e a atualidade dos registos não são verificadas.",
     "Não foram fornecidos dados individuais de lesões, sintomas, sono ou recuperação.",
     "O ACWR isolado não diagnostica fadiga nem prevê lesões.",
   ];
@@ -36,16 +42,20 @@ export function buildCoachExplainability(
     usedInputs,
     limitations: [...new Set(limitations)],
     nonClinicalWarning:
-      "Informação desportiva indicativa, não é diagnóstico médico nem substitui avaliação de um profissional qualificado.",
+      "Informação desportiva indicativa; não é diagnóstico médico nem substitui avaliação de um profissional qualificado.",
   };
 }
 
-/** Appends transparent provenance to the existing report text shown in the Lab UI. */
+/**
+ * The current Lab route renders workloadVerdict as plain text, so format the
+ * explainability metadata as clearly labeled text that remains readable there.
+ */
 export function formatCoachExplainability(explanation: CoachExplainability): string {
   return [
-    `Confiança: ${explanation.confidence} (qualidade dos dados: ${explanation.sourceStatus}).`,
+    `Confiança: ${explanation.confidence}.`,
+    `Qualidade dos dados: ${SOURCE_STATUS_LABELS[explanation.sourceStatus]}.`,
     `Dados usados: ${explanation.usedInputs.join("; ")}.`,
     `Limitações: ${explanation.limitations.join(" ")}`,
-    explanation.nonClinicalWarning,
-  ].join(" ");
+    `Aviso: ${explanation.nonClinicalWarning}`,
+  ].join(" | ");
 }
