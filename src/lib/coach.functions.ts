@@ -2,6 +2,11 @@ import { z } from "zod";
 import { createServerFn } from "@tanstack/react-start";
 import { GoogleGenAI } from "@google/genai";
 import { assessCoachDataQuality } from "./coach-data-quality";
+import {
+  buildCoachExplainability,
+  formatCoachExplainability,
+  type CoachExplainability,
+} from "./coach-explainability";
 
 const coachReportRequestSchema = z.object({
   acwr: z.number().finite().nonnegative(),
@@ -27,29 +32,24 @@ export type CoachReportResponse = {
   tacticalAdvice: string[];
   keyPrescription: string;
   modelUsed: string;
-};
+} & CoachExplainability;
 
-export const coachReportSchema = z.object({
+const generatedCoachReportSchema = z.object({
   headline: z.string().min(8).max(200),
   injuryRiskLevel: z.enum(["BAIXO", "MODERADO", "ELEVADO"]),
   workloadVerdict: z.string().min(20).max(500),
   tacticalAdvice: z.array(z.string().min(8).max(200)).min(1).max(5),
   keyPrescription: z.string().min(10).max(250),
-  modelUsed: z.string().min(4).max(80).optional(),
 });
 
-export function parseCoachReport(raw: string): CoachReportResponse | null {
+export function parseCoachReport(raw: string) {
   try {
-    const result = coachReportSchema.safeParse(JSON.parse(raw) as unknown);
+    const result = generatedCoachReportSchema.safeParse(JSON.parse(raw) as unknown);
     if (!result.success) {
       console.warn("[FootStats-AI] invalid coach report payload", result.error.flatten());
       return null;
     }
-
-    return {
-      ...result.data,
-      modelUsed: result.data.modelUsed ?? "Gemini 3.8 Flash (FootStats-AI)",
-    };
+    return result.data;
   } catch (error) {
     console.warn("[FootStats-AI] failed to parse coach report payload:", error);
     return null;
@@ -61,13 +61,14 @@ export const getAiCoachReport = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<CoachReportResponse> => {
     const quality = assessCoachDataQuality(data);
     if (quality.status === "insufficient") {
-      // Do not call the model or generate a fallback assessment from inadequate data.
       throw new Error(`Dados insuficientes para análise: ${quality.blockers.join(" ")}`);
     }
 
+    const explainability = buildCoachExplainability(data, quality);
+    const explanationText = formatCoachExplainability(explainability);
     const qualityNote = quality.warnings.length
       ? `Limitações dos dados: ${quality.warnings.join(" ")}`
-      : "Dados recebidos sem limitações sinalizadas; não foram verificadas fontes externas nem a atualidade dos registos.";
+      : "Dados recebidos sem limitações sinalizadas; a origem e a atualidade não foram verificadas.";
 
     const { acwr, acute, chronic, recentResults, upcomingMatch } = data;
     const apiKey = process.env.GEMINI_API_KEY;
@@ -90,20 +91,21 @@ Devolva apenas JSON válido com headline, injuryRiskLevel (BAIXO, MODERADO ou EL
           config: { responseMimeType: "application/json" },
         });
 
-        const parsed = response.text?.trim() ? parseCoachReport(response.text.trim()) : null;
-        if (parsed) {
+        const report = response.text?.trim() ? parseCoachReport(response.text.trim()) : null;
+        if (report) {
           return {
-            ...parsed,
-            workloadVerdict: `${parsed.workloadVerdict} ${qualityNote}`,
+            ...report,
+            workloadVerdict: `${report.workloadVerdict} ${qualityNote} ${explanationText}`,
             modelUsed: "Gemini 3.8 Flash (FootStats-AI)",
+            ...explainability,
           };
         }
-      } catch (err) {
-        console.warn("[FootStats-AI] Gemini call failed or offline, using cautious rule-based fallback:", err);
+      } catch (error) {
+        console.warn("[FootStats-AI] Gemini call failed or offline, using cautious rule-based fallback:", error);
       }
     }
 
-    // Conservative deterministic fallback; ACWR alone is not a medical assessment.
+    // Conservative fallback: ACWR alone is not a medical assessment.
     let headline = "Análise indicativa da carga de treino";
     let injuryRiskLevel: CoachReportResponse["injuryRiskLevel"] = "MODERADO";
     let workloadVerdict = `O ACWR recebido é ${acwr.toFixed(2)}. Este indicador isolado não diagnostica fadiga nem prevê lesões.`;
@@ -138,9 +140,10 @@ Devolva apenas JSON válido com headline, injuryRiskLevel (BAIXO, MODERADO ou EL
     return {
       headline,
       injuryRiskLevel,
-      workloadVerdict: `${workloadVerdict} ${qualityNote}`,
+      workloadVerdict: `${workloadVerdict} ${qualityNote} ${explanationText}`,
       tacticalAdvice,
       keyPrescription,
       modelUsed: "FootStats-AI Sports Engine (heurístico; não clínico)",
+      ...explainability,
     };
   });
