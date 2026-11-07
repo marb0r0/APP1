@@ -47,18 +47,28 @@ function MarketAgents() {
   const leagues = useMemo(() => [...new Set(board.matches.map((match) => match.league))].sort(), [board.matches]);
   const fixtures = useMemo(() => board.matches.filter((match) => match.phase === "pre"), [board.matches]);
 
-  const allRows = useMemo<MarketRow[]>(() =>
-    fixtures.flatMap((match) =>
-      getMatchMarkets(match).map((market) => {
-        const key = `${match.id}:${market.id}`;
-        const typedPrice = prices[key];
-        const odds = typedPrice === undefined ? market.bookmakerOdds : Number(typedPrice);
-        const validOdds = odds != null && Number.isFinite(odds) && odds > 1 ? odds : null;
-        const edge = validOdds == null ? null : calculateMarketEdge(market.probability, validOdds);
-        const stake = validOdds == null ? 0 : calculateResponsibleStake(market.probability, validOdds, bankroll, maxStakePercent);
-        return { ...market, key, fixture: `${match.home} vs ${match.away}`, league: match.league, phase: match.phase, odds: validOdds, edge, stake };
-      }),
-    ),
+  const allRows = useMemo<MarketRow[]>(
+    () =>
+      fixtures.flatMap((match) =>
+        getMatchMarkets(match).map((market) => {
+          const key = `${match.id}:${market.id}`;
+          const typedPrice = prices[key];
+          const odds = typedPrice === undefined ? market.bookmakerOdds : Number(typedPrice);
+          const validOdds = odds != null && Number.isFinite(odds) && odds > 1 ? odds : null;
+          const edge = validOdds == null ? null : calculateMarketEdge(market.probability, validOdds);
+          const stake = validOdds == null ? 0 : calculateResponsibleStake(market.probability, validOdds, bankroll, maxStakePercent);
+          return {
+            ...market,
+            key,
+            fixture: `${match.home} vs ${match.away}`,
+            league: match.league,
+            phase: match.phase,
+            odds: validOdds,
+            edge,
+            stake,
+          };
+        }),
+      ),
     [fixtures, prices, bankroll, maxStakePercent],
   );
 
@@ -133,24 +143,65 @@ function MarketAgents() {
     [bankroll, dailyLimitPercent, maxStakePercent, opportunities],
   );
 
+  const calibrationWeight = calibrationReport
+    ? calibrationReport.status === "larger_sample"
+      ? 1
+      : calibrationReport.status === "preliminary"
+        ? 0.75
+        : calibrationReport.status === "insufficient_sample"
+          ? 0.45
+          : 0.25
+    : 0.5;
+
+  const overallDecisionScore = useMemo(() => {
+    if (!opportunities.length) return 22;
+
+    const avgEdgePct = (opportunities.reduce((sum, row) => sum + (row.edge ?? 0), 0) / opportunities.length) * 100;
+    const riskScore =
+      riskSummary.status === "within_limit"
+        ? 100
+        : riskSummary.status === "scaled_to_limit"
+          ? 72
+          : riskSummary.status === "blocked"
+            ? 18
+            : 28;
+
+    return Math.min(100, Math.max(18, Math.round(avgEdgePct * 2.1 + riskScore * 0.38 + calibrationWeight * 35)));
+  }, [calibrationWeight, opportunities, riskSummary.status]);
+
+  const decisionSummary =
+    overallDecisionScore >= 80
+      ? { label: "Aprovar", tone: "text-live border-live/40 bg-live/10" }
+      : overallDecisionScore >= 60
+        ? { label: "Verificar", tone: "text-gold border-gold/40 bg-gold/10" }
+        : { label: "Ignorar", tone: "text-muted border-line bg-surface" };
+
   function updatePrice(key: string, value: string) {
     setPrices((previous) => ({ ...previous, [key]: value }));
   }
 
   return (
     <main className="mx-auto min-h-screen max-w-7xl px-4 pb-20 pt-6 sm:px-6">
-      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-line pb-5">
-        <div>
-          <Link to="/" className="text-xs font-semibold text-primary hover:underline">← Voltar ao Pitchline</Link>
-          <p className="mt-3 text-xs font-mono uppercase tracking-widest text-gold">Central de análise</p>
-          <h1 className="mt-1 font-display text-3xl font-bold text-fg sm:text-4xl">Mercados, estatísticas e risco</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">
-            Estimativas transparentes, não previsões garantidas. A aplicação não coloca apostas.
-          </p>
-        </div>
-        <div className="rounded-xl border border-gold/40 bg-gold/10 px-4 py-3 text-xs text-fg sm:max-w-sm">
-          <strong className="text-gold">Jogo responsável:</strong> use apenas dinheiro que possa perder, não persiga
-          prejuízos e faça pausas.
+      <header className="glass-panel surface-glow mt-2 rounded-[28px] p-6 sm:p-7">
+        <div className="flex flex-wrap items-start justify-between gap-5">
+          <div>
+            <Link to="/" className="text-xs font-semibold text-primary hover:underline">← Voltar ao Pitchline</Link>
+            <p className="mt-3 text-xs font-mono uppercase tracking-[0.28em] text-gold">Central de decisão</p>
+            <h1 className="mt-2 font-display text-3xl font-bold text-fg sm:text-5xl">Mercados, risco e calibração</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted">
+              Estimativas transparentes. O painel combina edge, limite de exposição e qualidade histórica para priorizar sinais.
+            </p>
+          </div>
+
+          <div className="min-w-[220px] rounded-2xl border border-primary/30 bg-primary/8 p-4">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-muted">Score geral</p>
+            <div className="mt-3 flex items-end justify-between gap-3">
+              <span className="font-display text-4xl font-bold text-fg">{overallDecisionScore}</span>
+              <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${decisionSummary.tone}`}>
+                {decisionSummary.label}
+              </span>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -196,7 +247,7 @@ function MarketAgents() {
       </section>
 
       <section className="mt-5 grid gap-3 lg:grid-cols-2">
-        <article className="rounded-2xl border border-line bg-surface p-4">
+        <article className="glass-panel rounded-[24px] p-4">
           <div className="flex items-center justify-between gap-3">
             <h2 className="font-display text-xl font-bold text-fg">Agente de risco</h2>
             <span className="rounded-full border border-primary/40 bg-primary/10 px-2 py-1 text-[10px] uppercase tracking-wide text-primary">
@@ -228,7 +279,7 @@ function MarketAgents() {
           </div>
         </article>
 
-        <article className="rounded-2xl border border-line bg-surface p-4">
+        <article className="glass-panel rounded-[24px] p-4">
           <div className="flex items-center justify-between gap-3">
             <h2 className="font-display text-xl font-bold text-fg">Agente de calibração</h2>
             <span className="rounded-full border border-gold/40 bg-gold/10 px-2 py-1 text-[10px] uppercase tracking-wide text-gold">
@@ -269,7 +320,7 @@ function MarketAgents() {
         </article>
       </section>
 
-      <section className="mt-5 rounded-2xl border border-line bg-surface p-4 sm:p-5">
+      <section className="mt-5 glass-panel rounded-[28px] p-4 sm:p-5">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h2 className="font-display text-xl font-bold text-fg">Scanner multi-jogo e multi-mercado</h2>
@@ -413,9 +464,9 @@ function MarketAgents() {
         )}
 
         {fixtures.length ? (
-          <div className="mt-3 overflow-x-auto rounded-xl border border-line">
-            <table className="w-full min-w-[1050px] text-left text-xs">
-              <thead className="bg-surface-2 text-[10px] uppercase tracking-wide text-muted">
+          <div className="mt-3 overflow-x-auto rounded-[20px] border border-line">
+            <table className="w-full min-w-[1120px] text-left text-xs">
+              <thead className="bg-surface-2 text-[10px] uppercase tracking-[0.18em] text-muted">
                 <tr>
                   <th className="px-3 py-3">Jogo / mercado</th>
                   <th className="px-3 py-3 text-right">Prob. xG</th>
@@ -423,46 +474,93 @@ function MarketAgents() {
                   <th className="px-3 py-3 text-right">Odd do mercado</th>
                   <th className="px-3 py-3 text-right">Edge</th>
                   <th className="px-3 py-3 text-right">Stake</th>
+                  <th className="px-3 py-3 text-right">Decisão</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {filteredRows.map((row) => (
-                  <tr key={row.key} className={row.edge !== null && row.edge >= minEdge / 100 ? "bg-primary/5" : "bg-surface"}>
-                    <td className="px-3 py-2.5">
-                      <span className="block text-[10px] text-muted">
-                        {row.league} · {row.category}
-                      </span>
-                      <span className="block font-semibold text-fg">{row.fixture}</span>
-                      <span className="block text-[10px] text-muted">{row.label}</span>
-                    </td>
-                    <td className="px-3 py-2.5 text-right font-mono text-fg">{(row.probability * 100).toFixed(1)}%</td>
-                    <td className="px-3 py-2.5 text-right font-mono text-muted">
-                      {row.fairOdds ? row.fairOdds.toFixed(2) : "—"}
-                    </td>
-                    <td className="px-3 py-2.5 text-right">
-                      <input
-                        aria-label={`Odd de mercado para ${row.fixture} ${row.label}`}
-                        type="number"
-                        min="1.01"
-                        step="0.01"
-                        placeholder="Odd"
-                        value={prices[row.key] ?? row.bookmakerOdds}
-                        onChange={(event) => updatePrice(row.key, event.target.value)}
-                        className="w-20 rounded-lg border border-line bg-bg px-2 py-1 text-right text-fg"
-                      />
-                    </td>
-                    <td
-                      className={`px-3 py-2.5 text-right font-mono font-semibold ${
-                        row.edge !== null && row.edge >= minEdge / 100 ? "text-primary" : "text-muted"
-                      }`}
-                    >
-                      {row.edge === null ? "—" : `${(row.edge * 100).toFixed(1)}%`}
-                    </td>
-                    <td className="px-3 py-2.5 text-right font-mono text-fg">
-                      {row.stake > 0 ? `€${row.stake.toFixed(2)}` : "—"}
-                    </td>
-                  </tr>
-                ))}
+                {filteredRows.map((row) => {
+                  const edgePct = ((row.edge ?? 0) * 100);
+                  const riskDecision = evaluateRisk({
+                    bankroll,
+                    dailyExposureLimitPercent: dailyLimitPercent,
+                    maxStakePercent: maxStakePercent,
+                    dataQuality: edgePct >= minEdge ? "sufficient" : "limited",
+                    picks: [{
+                      id: row.key,
+                      probability: row.probability,
+                      decimalOdds: row.odds ?? 1.01,
+                      requestedStake: row.stake,
+                    }],
+                  });
+
+                  const calibrationScore = calibrationReport
+                    ? calibrationReport.status === "larger_sample"
+                      ? 100
+                      : calibrationReport.status === "preliminary"
+                        ? 72
+                        : calibrationReport.status === "insufficient_sample"
+                          ? 45
+                          : 24
+                    : 60;
+
+                  const score = Math.min(
+                    100,
+                    Math.max(
+                      12,
+                      Math.round(edgePct * 1.8 + (riskDecision.status === "within_limit" ? 28 : riskDecision.status === "scaled_to_limit" ? 16 : 8) + calibrationScore * 0.32),
+                    ),
+                  );
+
+                  const decision =
+                    score >= 80
+                      ? { label: "Aprovar", tone: "text-live border-live/40 bg-live/10" }
+                      : score >= 60
+                        ? { label: "Verificar", tone: "text-gold border-gold/40 bg-gold/10" }
+                        : { label: "Ignorar", tone: "text-muted border-line bg-surface" };
+
+                  return (
+                    <tr key={row.key} className={row.edge !== null && row.edge >= minEdge / 100 ? "bg-primary/5" : "bg-surface"}>
+                      <td className="px-3 py-2.5">
+                        <span className="block text-[10px] text-muted">
+                          {row.league} · {row.category}
+                        </span>
+                        <span className="block font-semibold text-fg">{row.fixture}</span>
+                        <span className="block text-[10px] text-muted">{row.label}</span>
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-fg">{(row.probability * 100).toFixed(1)}%</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-muted">
+                        {row.fairOdds ? row.fairOdds.toFixed(2) : "—"}
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <input
+                          aria-label={`Odd de mercado para ${row.fixture} ${row.label}`}
+                          type="number"
+                          min="1.01"
+                          step="0.01"
+                          placeholder="Odd"
+                          value={prices[row.key] ?? row.bookmakerOdds}
+                          onChange={(event) => updatePrice(row.key, event.target.value)}
+                          className="w-20 rounded-lg border border-line bg-bg px-2 py-1 text-right text-fg"
+                        />
+                      </td>
+                      <td
+                        className={`px-3 py-2.5 text-right font-mono font-semibold ${
+                          row.edge !== null && row.edge >= minEdge / 100 ? "text-primary" : "text-muted"
+                        }`}
+                      >
+                        {row.edge === null ? "—" : `${(row.edge * 100).toFixed(1)}%`}
+                      </td>
+                      <td className="px-3 py-2.5 text-right font-mono text-fg">
+                        {row.stake > 0 ? `€${row.stake.toFixed(2)}` : "—"}
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${decision.tone}`}>
+                          {decision.label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -484,8 +582,8 @@ function MarketAgents() {
 
 function AgentCard({ title, status, children }: { title: string; status: string; children: string }) {
   return (
-    <article className="rounded-2xl border border-line bg-surface p-4">
-      <h2 className="text-xs font-bold uppercase tracking-wider text-primary">{title}</h2>
+    <article className="glass-panel rounded-[24px] p-4">
+      <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-primary">{title}</h2>
       <p className="mt-2 text-[10px] uppercase tracking-[0.15em] text-muted">{status}</p>
       <p className="mt-3 text-sm leading-relaxed text-fg">{children}</p>
     </article>

@@ -1,50 +1,28 @@
 # Pitchline
 
-A TypeScript and React application built with Vite, with supporting scripts for local development and project maintenance.
+Pitchline is a TypeScript + React app powered by Vite and TanStack Router.
 
-## Stack
+## Quick start on Windows
 
-- React, TypeScript, and Vite
-- TanStack Router / Start
-- Tailwind CSS
-- Node.js scripts and tests
+Double-click `start-app.bat` in the project root to install dependencies and launch the app in the default browser.
 
-## Requirements
-
-- Node.js 22 or newer
-- npm
-
-## Install and run
+## Development
 
 ```bash
-npm ci
+npm install
 npm run dev
 ```
 
-## Checks and tests
-
-```bash
-npm run typecheck
-npm run lint
-npm run format:check
-npm test
-npm run check
-```
-
-Run `npm run check` before submitting changes. To format files, run `npm run format`.
-
-## Build
+## Useful commands
 
 ```bash
 npm run build
+npm run typecheck
+npm test
 ```
 
-## Environment variables
+## Notes
 
-Use `.env.example` as the reference for required variables. Keep real credentials in local environment configuration or the deployment secrets manager; do not commit secrets.
-
-## Project layout
-
-- `src/routes/` — application routes
-- `src/lib/` — shared application and domain logic
-- `scripts/` — development and maintenance scripts
+- The app is designed for local football intelligence workflows and analysis views.
+- Keep `.env` values local and never commit secrets.
+- For a real browser launch from Windows, the launcher opens `http://localhost:3000` after the dev server starts.
