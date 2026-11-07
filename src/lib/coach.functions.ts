@@ -1,21 +1,24 @@
 import { z } from "zod";
 import { createServerFn } from "@tanstack/react-start";
 import { GoogleGenAI } from "@google/genai";
+import { assessCoachDataQuality } from "./coach-data-quality";
 
-export type CoachReportRequest = {
-  acwr: number;
-  acute: number;
-  chronic: number;
-  sessionsCount: number;
-  recentResults: string[];
-  upcomingMatch?: {
-    home: string;
-    away: string;
-    homeXg: number;
-    awayXg: number;
-    league: string;
-  };
-};
+const coachReportRequestSchema = z.object({
+  acwr: z.number().finite().nonnegative(),
+  acute: z.number().finite().nonnegative(),
+  chronic: z.number().finite().nonnegative(),
+  sessionsCount: z.number().int().nonnegative(),
+  recentResults: z.array(z.string().trim().min(1).max(120)).max(10),
+  upcomingMatch: z.object({
+    home: z.string().trim().min(1).max(100),
+    away: z.string().trim().min(1).max(100),
+    homeXg: z.number().finite().nonnegative(),
+    awayXg: z.number().finite().nonnegative(),
+    league: z.string().trim().min(1).max(100),
+  }).optional(),
+});
+
+export type CoachReportRequest = z.infer<typeof coachReportRequestSchema>;
 
 export type CoachReportResponse = {
   headline: string;
@@ -37,19 +40,14 @@ export const coachReportSchema = z.object({
 
 export function parseCoachReport(raw: string): CoachReportResponse | null {
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    const result = coachReportSchema.safeParse(parsed);
+    const result = coachReportSchema.safeParse(JSON.parse(raw) as unknown);
     if (!result.success) {
       console.warn("[FootStats-AI] invalid coach report payload", result.error.flatten());
       return null;
     }
 
     return {
-      headline: result.data.headline,
-      injuryRiskLevel: result.data.injuryRiskLevel,
-      workloadVerdict: result.data.workloadVerdict,
-      tacticalAdvice: result.data.tacticalAdvice,
-      keyPrescription: result.data.keyPrescription,
+      ...result.data,
       modelUsed: result.data.modelUsed ?? "Gemini 3.8 Flash (FootStats-AI)",
     };
   } catch (error) {
@@ -59,98 +57,90 @@ export function parseCoachReport(raw: string): CoachReportResponse | null {
 }
 
 export const getAiCoachReport = createServerFn({ method: "POST" })
-  .validator((input: CoachReportRequest) => input)
+  .validator((input: unknown) => coachReportRequestSchema.parse(input))
   .handler(async ({ data }): Promise<CoachReportResponse> => {
-    const { acwr, acute, chronic, recentResults, upcomingMatch } = data;
+    const quality = assessCoachDataQuality(data);
+    if (quality.status === "insufficient") {
+      // Do not call the model or generate a fallback assessment from inadequate data.
+      throw new Error(`Dados insuficientes para análise: ${quality.blockers.join(" ")}`);
+    }
 
+    const qualityNote = quality.warnings.length
+      ? `Limitações dos dados: ${quality.warnings.join(" ")}`
+      : "Dados recebidos sem limitações sinalizadas; não foram verificadas fontes externas nem a atualidade dos registos.";
+
+    const { acwr, acute, chronic, recentResults, upcomingMatch } = data;
     const apiKey = process.env.GEMINI_API_KEY;
+
     if (apiKey) {
       try {
         const ai = new GoogleGenAI();
-        const prompt = `Você é o Autonomous Tactical Coach & Sports Science Advisor do FootStats AI.
-Analise os seguintes dados biométricos e competitivos:
-- Rácio de Carga Aguda:Crónica (ACWR): ${acwr.toFixed(2)} (Aguda: ${acute}, Crónica: ${chronic}).
-- Resultados Recentes: ${recentResults.join(", ") || "Sem histórico recente"}.
-${
-  upcomingMatch
-    ? `- Próximo Jogo: ${upcomingMatch.home} vs ${upcomingMatch.away} (Liga: ${upcomingMatch.league}, xG Casa: ${upcomingMatch.homeXg}, xG Fora: ${upcomingMatch.awayXg}).`
-    : ""
-}
+        const prompt = `Você é um assistente informativo de ciência do desporto. Não faça diagnósticos médicos nem afirme prever lesões.
+Analise apenas os dados fornecidos e explicite as suas limitações.
+- Rácio ACWR: ${acwr.toFixed(2)} (carga aguda: ${acute}; carga crónica: ${chronic}).
+- Resultados recentes: ${recentResults.join(", ") || "não fornecidos"}.
+${upcomingMatch ? `- Próximo jogo: ${upcomingMatch.home} vs ${upcomingMatch.away} (${upcomingMatch.league}; xG casa ${upcomingMatch.homeXg}; xG fora ${upcomingMatch.awayXg}).` : ""}
+- Qualidade dos dados: ${quality.status}. ${qualityNote}
 
-Importante: use apenas estes dados e indique claramente o que é inferência, não diagnóstico médico.
-Forneça um relatório executivo em JSON com o seguinte formato:
-{
-  "headline": "Uma frase de impacto sobre o estado da equipa/atleta",
-  "injuryRiskLevel": "BAIXO" ou "MODERADO" ou "ELEVADO",
-  "workloadVerdict": "Diagnóstico do ACWR e fadiga neuromuscular",
-  "tacticalAdvice": ["Recomendação tática 1", "Recomendação 2", "Recomendação 3"],
-  "keyPrescription": "Ação imediata recomendada para o próximo treino/jogo"
-}
-Retorne APENAS o JSON válido, sem formatação markdown extra.`;
+Devolva apenas JSON válido com headline, injuryRiskLevel (BAIXO, MODERADO ou ELEVADO), workloadVerdict, tacticalAdvice (1 a 5 recomendações gerais, não médicas) e keyPrescription (sugestão geral e cautelosa, não prescrição clínica). Não infira dados que não foram fornecidos.`;
 
         const response = await ai.models.generateContent({
           model: "gemini-3.8-flash",
           contents: prompt,
-          config: {
-            responseMimeType: "application/json",
-          },
+          config: { responseMimeType: "application/json" },
         });
 
-        const text = response.text?.trim() ?? "";
-        if (text) {
-          const parsed = parseCoachReport(text);
-          if (parsed) {
-            return {
-              ...parsed,
-              modelUsed: "Gemini 3.8 Flash (FootStats-AI)",
-            };
-          }
+        const parsed = response.text?.trim() ? parseCoachReport(response.text.trim()) : null;
+        if (parsed) {
+          return {
+            ...parsed,
+            workloadVerdict: `${parsed.workloadVerdict} ${qualityNote}`,
+            modelUsed: "Gemini 3.8 Flash (FootStats-AI)",
+          };
         }
       } catch (err) {
-        console.warn("[FootStats-AI] Gemini call failed or offline, using rule-based advisor:", err);
+        console.warn("[FootStats-AI] Gemini call failed or offline, using cautious rule-based fallback:", err);
       }
     }
 
-    // Deterministic Sports Science & Tactical Heuristic Fallback
-    let injuryRiskLevel: CoachReportResponse["injuryRiskLevel"] = "BAIXO";
-    let headline = "Carga Equilibrada: Zona Ótima de Rendimento (Sweet Spot)";
-    let workloadVerdict =
-      "O rácio ACWR encontra-se na faixa ótima (0.80 - 1.30), maximizando a adaptação física e minimizando o risco de lesões.";
-    let tacticalAdvice: string[] = [
-      "Manter intensidade normal nos blocos de transição ofensiva rápida.",
-      "Estimular pressão pós-perda sem receio de sobrecarga neuromuscular.",
-      "Próximo jogo favorável à imposição de ritmo físico alto.",
+    // Conservative deterministic fallback; ACWR alone is not a medical assessment.
+    let headline = "Análise indicativa da carga de treino";
+    let injuryRiskLevel: CoachReportResponse["injuryRiskLevel"] = "MODERADO";
+    let workloadVerdict = `O ACWR recebido é ${acwr.toFixed(2)}. Este indicador isolado não diagnostica fadiga nem prevê lesões.`;
+    let tacticalAdvice = [
+      "Rever a carga junto com perceção de esforço, recuperação e contexto individual.",
+      "Comparar esta semana com o histórico completo antes de alterar o plano.",
     ];
-    let keyPrescription = "Preservar a programação habitual com 1 dia de recuperação ativa pós-jogo.";
+    let keyPrescription = "Não há dados suficientes para uma prescrição individual; validar qualquer alteração com a equipa técnica ou um profissional qualificado.";
 
     if (acwr > 1.45) {
+      headline = "Carga aguda acima da referência";
       injuryRiskLevel = "ELEVADO";
-      headline = "Alerta de Sobrecarga: carga aguda elevada";
-      workloadVerdict = `O ACWR atingiu ${acwr.toFixed(2)}, indicando que a carga da última semana superou a média histórica. Recomendamos a redução cautelosa do volume e reforço da recuperação.`;
+      workloadVerdict = `O ACWR recebido é ${acwr.toFixed(2)} e merece revisão contextual. Não permite, por si só, concluir que exista lesão ou risco iminente.`;
       tacticalAdvice = [
-        "Adotar bloco médio/baixo para reduzir metros percorridos em alta velocidade.",
-        "Substituições antecipadas aos 60 minutos para jogadores-chave de corredor.",
-        "Privilegiar fases de posse de bola controlada para pausar o jogo.",
+        "Rever a carga recente e sinais de recuperação com a equipa técnica.",
+        "Considerar ajustar a sessão apenas após avaliar o contexto individual.",
       ];
-      keyPrescription = "Redução imediata de 20% a 30% do volume no próximo treino e ênfase em recuperação ativa.";
     } else if (acwr < 0.8) {
+      headline = "Carga recente abaixo da referência";
       injuryRiskLevel = "MODERADO";
-      headline = "Subtreino Detectado: risco de perda de ritmo competitivo";
-      workloadVerdict = `O ACWR está em ${acwr.toFixed(2)}, sugerindo subcarga ou destreino na última semana.`;
+      workloadVerdict = `O ACWR recebido é ${acwr.toFixed(2)}. A carga mais baixa não prova destreino e deve ser interpretada com o histórico e o contexto do atleta.`;
       tacticalAdvice = [
-        "Aumentar estímulos de potência em campo reduzido.",
-        "Ajustar tempos de reação para evitar lentidão nas disputas de primeira bola.",
-        "Usar sessão curta e intensa para reintroduzir velocidade e explosão.",
+        "Rever a evolução da carga ao longo de várias semanas.",
+        "Evitar aumentos abruptos sem acompanhamento da equipa técnica.",
       ];
-      keyPrescription = "Sessão curta e intensa de velocidade com foco em transições rápidas.";
+    } else if (acwr <= 1.3) {
+      headline = "Carga dentro da faixa de referência configurada";
+      injuryRiskLevel = "BAIXO";
+      workloadVerdict = `O ACWR recebido é ${acwr.toFixed(2)} e está dentro da faixa de referência configurada; isso não garante ausência de risco.`;
     }
 
     return {
       headline,
       injuryRiskLevel,
-      workloadVerdict,
+      workloadVerdict: `${workloadVerdict} ${qualityNote}`,
       tacticalAdvice,
       keyPrescription,
-      modelUsed: "FootStats-AI Sports Engine (Algorítmico)",
+      modelUsed: "FootStats-AI Sports Engine (heurístico; não clínico)",
     };
   });
